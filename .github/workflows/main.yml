@@ -1,0 +1,56 @@
+name: Build iOS
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up Ruby
+      uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: '2.7'
+
+    - name: Install dependencies
+      run: bundle install
+
+    - name: Install CocoaPods
+      run: pod install
+      working-directory: ./kylianerpappapp
+
+    - name: Set up keychain
+      run: |
+        security create-keychain -p "" build.keychain
+        security default-keychain -s build.keychain
+        security unlock-keychain -p "" build.keychain
+        security set-keychain-settings -t 3600 -u build.keychain
+
+    - name: Import certificates
+      run: |
+        echo "${{ secrets.APPLE_CERTIFICATE_P12 }}" | base64 --decode > build_certificate.p12
+        security import build_certificate.p12 -k build.keychain -P "${{ secrets.P12_PASSWORD }}" -T /usr/bin/codesign
+        security set-key-partition-list -S apple-tool:,apple: -s -k "" build.keychain
+        mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+        echo "${{ secrets.PROVISIONING_PROFILE }}" | base64 --decode > ~/Library/MobileDevice/Provisioning\ Profiles/$(uuidgen).mobileprovision
+
+    - name: Build the project
+      run: xcodebuild -workspace kylianerpappapp.xcworkspace -scheme kylianerpappapp -sdk iphoneos -configuration Release archive -archivePath $PWD/build/kylianerpappapp.xcarchive
+
+    - name: Export the IPA
+      run: xcodebuild -exportArchive -archivePath $PWD/build/kylianerpappapp.xcarchive -exportOptionsPlist ExportOptions.plist -exportPath $PWD/build
+
+    - name: Upload the IPA
+      uses: actions/upload-artifact@v2
+      with:
+        name: kylianerpappapp.ipa
+        path: build/kylianerpappapp.ipa
